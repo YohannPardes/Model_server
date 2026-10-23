@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://redis:6379/0"
     celery_result_backend: str = "redis://redis:6379/1"
     result_expires_seconds: int = 3600
+    # Job records (filename, size, created_at). Own db number so they don't mix with Celery's data
+    redis_url: str = "redis://redis:6379/2"
 
     # Uploads
     upload_dir: Path = Path("/data/uploads")
@@ -22,6 +24,7 @@ class Settings(BaseSettings):
     inference_timeout_seconds: float = 60
 
     log_level: str = "INFO"
+    
 
     @property
     def max_upload_bytes(self) -> int:
