@@ -1,0 +1,15 @@
+.venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+tests/
+Dockerfile
+.env
+
+# Weights are mounted, not baked into the image
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+weights/

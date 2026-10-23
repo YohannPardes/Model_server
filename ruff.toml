@@ -1,0 +1,9 @@
+# Shared lint/format config for every package in the repo
+line-length = 100
+target-version = "py311"
+src = ["services/api/src", "services/inference/src", "sdk/src"]
+# Legacy architecture file, kept as-is for the checkpoint's import path
+extend-exclude = ["services/inference/src/inference_server/model"]
+
+[lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

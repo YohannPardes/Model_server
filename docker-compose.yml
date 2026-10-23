@@ -1,0 +1,89 @@
+name: model-server
+
+# Shared config for the lightweight app image (api, worker, flower). No torch in here.
+x-app: &app
+  build: ./services/api
+  image: model-server-app
+  env_file:
+    - path: .env
+      required: false
+  volumes:
+    - uploads:/data/uploads
+  depends_on:
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # Single process that owns the model. All worker processes send requests here,
+  # and it batches them dynamically. --workers 1 is required: more would load the model N times.
+  inference:
+    build:
+      context: ./services/inference
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cpu
+    image: model-server-inference:cpu
+    command: uvicorn inference_server.main:app --host 0.0.0.0 --port 9000 --workers 1
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DEVICE: cpu
+    volumes:
+      - uploads:/data/uploads:ro
+    expose:
+      - "9000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    <<: *app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Many CPU processes: handle queueing/retries and call the inference service over HTTP
+  worker:
+    <<: *app
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=${WORKER_CONCURRENCY:-4}
+    depends_on:
+      redis:
+        condition: service_healthy
+      inference:
+        condition: service_healthy
+
+  flower:
+    <<: *app
+    command: celery -A app.worker.celery_app flower --port=5555
+    ports:
+      - "5555:5555"
+
+  frontend:
+    build: ./services/frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  uploads:

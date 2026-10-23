@@ -1,0 +1,20 @@
+# GPU override for the inference service. Requires an NVIDIA driver + NVIDIA Container Toolkit
+# (Docker Desktop on Windows: WSL2 backend handles this).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+
+services:
+  inference:
+    build:
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu124
+    image: model-server-inference:gpu
+    environment:
+      DEVICE: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
