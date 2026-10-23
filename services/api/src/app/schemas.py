@@ -9,6 +9,7 @@ Label = Literal["fake", "real"]
 
 
 class JobStatus(StrEnum):
+    """In order to keep the API contract stable"""
     QUEUED = "queued"
     PROCESSING = "processing"
     RETRYING = "retrying"
@@ -37,6 +38,17 @@ class JobCreated(BaseModel):
     job_id: UUID
     filename: str
     status: JobStatus
+
+
+class RejectedFile(BaseModel):
+    filename: str
+    error: str = Field(description="Machine-readable reason, e.g. 'FileTooLarge'")
+    detail: str = Field(description="Human-readable message, safe to show the user")
+
+
+class BatchResult(BaseModel):
+    accepted: list[JobCreated] = Field(description="Files that were queued, one job each")
+    rejected: list[RejectedFile] = Field(description="Files that failed validation and were not queued")
 
 
 class JobInfo(BaseModel):
