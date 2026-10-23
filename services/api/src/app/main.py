@@ -11,7 +11,7 @@ from app.config import get_settings
 async def lifespan(app: FastAPI):
     settings = get_settings()
     settings.upload_dir.mkdir(parents=True, exist_ok=True)   # make sure the volume path exists
-    app.state.redis = Redis.from_url(settings.redis_url)      # one shared client
+    app.state.redis = Redis.from_url(settings.redis_url, decode_responses=True)      # one shared client
     yield                                                     # ← the app runs here
     await app.state.redis.aclose()                            # clean shutdown
 
