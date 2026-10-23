@@ -8,11 +8,20 @@ x-app: &app
     - path: .env
       required: false
   volumes:
-    - uploads:/data/uploads
+    - uploads:/data/uploads          # kept until the code reads/writes MinIO instead of this path; then removed
   depends_on:
     redis:
       condition: service_healthy
+    minio-init:
+      condition: service_completed_successfully   # wait for the bucket to exist, not just for MinIO to be up
   restart: unless-stopped
+
+# Shared MinIO settings. Credentials come from .env (compose reads it for ${...}); defaults are dev-only.
+x-minio: &minio
+  image: minio/minio:RELEASE.2025-04-22T22-12-26Z   # pinned tag: `latest` would change under us on a re-pull
+  environment:
+    MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minio}           # same vars the app uses, so the two can't drift apart
+    MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minio-secret} # MinIO requires >= 8 chars
 
 services:
   redis:
@@ -23,6 +32,44 @@ services:
       timeout: 3s
       retries: 5
     restart: unless-stopped
+
+  # S3-compatible object storage for uploaded audio. Services share a URL instead of a disk,
+  # so api / worker / inference can run on different machines. Swap for AWS S3 / GCS / R2 by
+  # changing S3_ENDPOINT_URL and credentials only.
+  minio:
+    <<: *minio
+    command: server /data --console-address ":9001"  # fixed console port (default is random)
+    volumes:
+      - minio-data:/data                 # named volume: files survive `docker compose down`
+    expose:
+      - "9000"                           # S3 API: internal only; publish it later if the browser uploads directly (presigned URLs)
+    ports:
+      - "9001:9001"                      # web console on the host, to browse uploaded files
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]   # mc ships in the image; checks the server accepts requests
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # One-shot setup: create the bucket and its expiry rule, then exit. Idempotent, safe on every `up`.
+  # Done here rather than in app code so no service needs bucket-admin rights at runtime.
+  minio-init:
+    <<: *minio                           # reuses the MinIO image (it includes mc) - no extra image to pin
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing "local/${S3_BUCKET:-audio}"
+        # Lifecycle rule replaces a cleanup cron job. `import` overwrites the whole config,
+        # so re-running doesn't stack duplicate rules (unlike `mc ilm rule add`).
+        echo '{"Rules":[{"ID":"expire-uploads","Status":"Enabled","Filter":{"Prefix":"uploads/"},"Expiration":{"Days":${S3_UPLOAD_EXPIRE_DAYS:-1}}}]}' \
+          | mc ilm import "local/${S3_BUCKET:-audio}"
+    restart: "no"                        # must exit for service_completed_successfully to fire
 
   # Single process that owns the model. All worker processes send requests here,
   # and it batches them dynamically. --workers 1 is required: more would load the model N times.
@@ -39,7 +86,10 @@ services:
     environment:
       DEVICE: cpu
     volumes:
-      - uploads:/data/uploads:ro
+      - uploads:/data/uploads:ro         # kept until inference reads from MinIO; then removed
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully   # it will read audio from the bucket
     expose:
       - "9000"
     healthcheck:
@@ -64,9 +114,11 @@ services:
   worker:
     <<: *app
     command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=${WORKER_CONCURRENCY:-4}
-    depends_on:
+    depends_on:                          # this replaces x-app's depends_on entirely (no merge), so repeat minio-init
       redis:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
       inference:
         condition: service_healthy
 
@@ -87,3 +139,4 @@ services:
 
 volumes:
   uploads:
+  minio-data:
