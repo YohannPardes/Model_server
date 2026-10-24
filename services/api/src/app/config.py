@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     # Uploads
     upload_dir: Path = Path("/data/uploads")
     max_upload_mb: int = 20
-    allowed_extensions: str = "wav,mp3,flac,ogg,m4a"
+    allowed_extensions: str = "wav,mp3,flac,ogg"
 
     # Inference service
     inference_url: str = "http://inference:9000"
